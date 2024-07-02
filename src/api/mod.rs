@@ -207,6 +207,7 @@ pub struct ScanFilter {
     /// If the filter contains at least one service UUID, only devices supporting at least one of
     /// the given services will be available.
     pub services: Vec<Uuid>,
+    pub connectable_only: bool,
 }
 
 /// The type of write operation to use.
@@ -222,7 +223,7 @@ pub enum WriteType {
 /// Peripheral is the device that you would like to communicate with (the "server" of BLE). This
 /// struct contains both the current state of the device (its properties, characteristics, etc.)
 /// as well as functions for communication.
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait Peripheral: Send + Sync + Clone + Debug {
     /// Returns the unique identifier of the peripheral.
     fn id(&self) -> PeripheralId;
@@ -254,6 +255,10 @@ pub trait Peripheral: Send + Sync + Clone + Debug {
     /// connection. Note that peripherals allow only one connection at a time. Operations that
     /// attempt to communicate with a device will fail until it is connected.
     async fn connect(&self) -> Result<()>;
+
+    async fn pair(&self) -> Result<()> {
+        Ok(())
+    }
 
     /// Terminates a connection to the device.
     async fn disconnect(&self) -> Result<()>;

@@ -14,11 +14,17 @@
 use crate::{api::BDAddr, winrtble::utils, Error, Result};
 use log::{debug, trace};
 use windows::{
-    Devices::Bluetooth::{
-        BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice,
-        GenericAttributeProfile::{
-            GattCharacteristic, GattCommunicationStatus, GattDescriptor, GattDeviceService,
-            GattDeviceServicesResult,
+    Devices::{
+        Bluetooth::{
+            BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice,
+            GenericAttributeProfile::{
+                GattCharacteristic, GattCommunicationStatus, GattDescriptor, GattDeviceService,
+                GattDeviceServicesResult,
+            },
+        },
+        Enumeration::{
+            DeviceInformationCustomPairing, DevicePairingKinds, DevicePairingRequestedEventArgs,
+            DevicePairingResult,
         },
     },
     Foundation::{EventRegistrationToken, TypedEventHandler},
@@ -26,6 +32,7 @@ use windows::{
 
 pub type ConnectedEventHandler = Box<dyn Fn(bool) + Send>;
 
+#[derive(Clone)]
 pub struct BLEDevice {
     device: BluetoothLEDevice,
     connection_token: EventRegistrationToken,
@@ -77,6 +84,52 @@ impl BLEDevice {
         Ok(service_result)
     }
 
+    async fn make_pairing_request(&self) -> Result<DevicePairingResult> {
+        let winrt_error = |e| Error::Other(format!("{:?}", e).into());
+        let info = self.device.DeviceInformation()?;
+        let pairing = info.Pairing()?;
+        if !pairing.CanPair()? {
+            return Err(Error::Other("Device does to support pairing".into()));
+        }
+        let custom = pairing.Custom()?;
+
+        if pairing.IsPaired()? {
+            return Err(Error::PermissionDenied);
+        }
+        let handler = TypedEventHandler::new(
+            |_: &Option<DeviceInformationCustomPairing>,
+             args: &Option<DevicePairingRequestedEventArgs>| {
+                let Some(a) = args else { return Ok(()) };
+                let kind = a.PairingKind()?;
+                match kind {
+                    DevicePairingKinds::ConfirmOnly => {
+                        a.Accept()?;
+                    }
+                    DevicePairingKinds::ConfirmPinMatch => {
+                        let pin = a.Pin()?;
+                        log::info!("try accept with pin: {pin:?}");
+                        a.AcceptWithPin(&pin)?;
+                    }
+                    _ => log::warn!("Pairing kind not supported: {kind:?}"),
+                };
+
+                Ok(())
+            },
+        );
+        custom.PairingRequested(&handler)?;
+        let device_pairing = custom
+            .PairAsync(
+                DevicePairingKinds::ProvidePin
+                    | DevicePairingKinds::ConfirmPinMatch
+                    | DevicePairingKinds::DisplayPin
+                    | DevicePairingKinds::ConfirmOnly,
+            )
+            .map_err(winrt_error)?
+            .await?;
+
+        Ok(device_pairing)
+    }
+
     pub async fn connect(&self) -> Result<()> {
         if self.is_connected().await? {
             return Ok(());
@@ -84,7 +137,15 @@ impl BLEDevice {
 
         let service_result = self.get_gatt_services(BluetoothCacheMode::Uncached).await?;
         let status = service_result.Status().map_err(|_| Error::DeviceNotFound)?;
+        log::info!("gatt service result: {:?}", status);
+
         utils::to_error(status)
+    }
+
+    pub async fn pair(&self) -> Result<()> {
+        let result = self.make_pairing_request().await?;
+        log::info!("pairing result: {result:?}");
+        Ok(())
     }
 
     async fn is_connected(&self) -> Result<bool> {

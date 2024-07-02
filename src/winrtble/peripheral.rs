@@ -24,7 +24,6 @@ use crate::{
     common::{adapter_manager::AdapterManager, util::notifications_stream_from_broadcast_receiver},
     Error, Result,
 };
-use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::stream::Stream;
 use log::{trace, warn};
@@ -330,7 +329,6 @@ impl Debug for Peripheral {
     }
 }
 
-#[async_trait]
 impl ApiPeripheral for Peripheral {
     fn id(&self) -> PeripheralId {
         PeripheralId(self.shared.address)
@@ -389,6 +387,14 @@ impl ApiPeripheral for Peripheral {
         self.shared.connected.store(true, Ordering::Relaxed);
         self.emit_event(CentralEvent::DeviceConnected(self.shared.address.into()));
         Ok(())
+    }
+
+    async fn pair(&self) -> Result<()> {
+        let device = self.shared.device.lock().await;
+        let Some(d) = device.as_ref() else {
+            return Ok(());
+        };
+        d.pair().await
     }
 
     /// Terminates a connection to the device. This is a synchronous operation.

@@ -34,7 +34,10 @@ impl BLEWatcher {
     }
 
     pub fn start(&self, filter: ScanFilter, on_received: AdvertismentEventHandler) -> Result<()> {
-        let ScanFilter { services } = filter;
+        let ScanFilter {
+            services,
+            connectable_only,
+        } = filter;
         let ad = self
             .watcher
             .AdvertisementFilter()
@@ -57,6 +60,15 @@ impl BLEWatcher {
             BluetoothLEAdvertisementReceivedEventArgs,
         > = TypedEventHandler::new(
             move |_sender, args: &Option<BluetoothLEAdvertisementReceivedEventArgs>| {
+                if connectable_only {
+                    if !args
+                        .as_ref()
+                        .is_some_and(|a| a.IsConnectable().is_ok_and(|c| c))
+                    {
+                        return Ok(());
+                    }
+                }
+
                 if let Some(args) = args {
                     on_received(args);
                 }
